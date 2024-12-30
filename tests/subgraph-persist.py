@@ -1,6 +1,5 @@
 from langgraph.graph import START, StateGraph
 from langgraph_checkpoint_snowflake import SnowflakeSaver
-from langgraph_checkpoint_cosmosdb import CosmosDBSaver
 from typing import TypedDict
 
 
@@ -42,15 +41,19 @@ builder.add_edge(START, "node_1")
 builder.add_edge("node_1", "node_2")
 
 checkpointer = SnowflakeSaver(connection_name="langgraph")
-#checkpointer = CosmosDBSaver(database_name="langgraph", container_name="checkpointtest")
 
 graph = builder.compile(checkpointer=checkpointer)
-
-config = {"configurable": {"thread_id": "569"}}
-
+config = {"configurable": {"thread_id": "318"}}
 for _, chunk in graph.stream({"foo": "foo"}, config, subgraphs=True):
     print(chunk)
 
-[
-    s.tasks for s in graph.get_state_history(config) if s.next == ('__start__', 'node_1', 'node_2')
-]
+print(graph.get_state(config).values)
+
+state_with_subgraph = [
+    s for s in graph.get_state_history(config) if s.next == ("node_2",)
+][0]
+
+subgraph_config = state_with_subgraph.tasks[0].state
+print(subgraph_config)
+
+print(graph.get_state(subgraph_config).values)

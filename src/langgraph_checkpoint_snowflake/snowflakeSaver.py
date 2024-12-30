@@ -18,19 +18,21 @@ from langgraph.checkpoint.base import (
 from langgraph_checkpoint_snowflake.base import BaseSnowflakeSaver
 import snowflake.connector
 from snowflake.connector import DictCursor
-import json
+import json, ast
 
 class SnowflakeSaver(BaseSnowflakeSaver):
 
     def __init__(self, connection_name, 
                  warehouse=None, 
                  database=None, 
+                 schema=None,
                  role=None):
         super().__init__()
         self.warehouse = warehouse
         self.database = database
         self.connection_name = connection_name
         self.role = role 
+        self.schema = schema
 
         try:
             conn_params = {}
@@ -43,6 +45,8 @@ class SnowflakeSaver(BaseSnowflakeSaver):
                 conn_params['database'] = self.database
             if self.role:
                 conn_params['role'] = self.role
+            if self.schema:
+                conn_params['schema'] = self.schema
 
             self.conn = snowflake.connector.connect(**conn_params)
             self.setup()
@@ -96,8 +100,8 @@ class SnowflakeSaver(BaseSnowflakeSaver):
         with self._cursor() as cur:
             cur.execute(query, args)
             for value in cur:
-                channel_values = value.get("channel_values", value.get("CHANNEL_VALUES")).replace("undefined", "null")
-                yield CheckpointTuple(
+                channel_values = value.get("channel_values", value.get("CHANNEL_VALUES")).replace("undefined", "null")  
+                cpt =  CheckpointTuple(
                     {
                         "configurable": {
                             "thread_id": value.get("thread_id", value.get("THREAD_ID")),
@@ -108,7 +112,7 @@ class SnowflakeSaver(BaseSnowflakeSaver):
                     self._load_checkpoint(
                         json.loads(value.get("checkpoint", value.get("CHECKPOINT"))),
                         json.loads(channel_values),
-                        json.loads(value.get("pending_sends", value.get("PENDING_SENDS"))),
+                        json.loads(value.get("pending_sends", value.get("PENDING_SENDS")))
                     ),
                     self._load_metadata(value.get("metadata", value.get("METADATA"))),
                     (
@@ -124,6 +128,7 @@ class SnowflakeSaver(BaseSnowflakeSaver):
                     ),
                     self._load_writes(value.get("pending_writes", value.get("PENDING_WRITES"))),
                 )
+                yield cpt
 
     def get_tuple(self, config: RunnableConfig) -> Optional[CheckpointTuple]:
 
@@ -144,7 +149,7 @@ class SnowflakeSaver(BaseSnowflakeSaver):
             )
 
             for value in cur:
-                channel_values = value.get("channel_values", value.get("CHANNEL_VALUES")).replace("undefined", "null")                
+                channel_values = value.get("channel_values", value.get("CHANNEL_VALUES")).replace("undefined", "null")               
                 return CheckpointTuple(
                     {
                         "configurable": {
@@ -172,6 +177,7 @@ class SnowflakeSaver(BaseSnowflakeSaver):
                     ),
                     self._load_writes(value.get("pending_writes" ,value["PENDING_WRITES"])),
                 )
+                
 
     def put(
         self,
@@ -215,7 +221,7 @@ class SnowflakeSaver(BaseSnowflakeSaver):
                     checkpoint["id"],
                     checkpoint_id,
                     json.dumps(self._dump_checkpoint(copy)),
-                    self._dump_metadata(metadata),
+                    json.dumps(self._dump_metadata(metadata)),
                 ),
             )
         return next_config

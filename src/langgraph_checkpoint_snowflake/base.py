@@ -37,8 +37,8 @@ MIGRATIONS = [
         checkpoint_id STRING NOT NULL,
         parent_checkpoint_id STRING,
         type STRING,
-        checkpoint VARIANT NOT NULL, -- JSONB equivalent in Snowflake
-        metadata VARIANT NOT NULL DEFAULT OBJECT_CONSTRUCT(), -- JSONB equivalent with default empty object
+        checkpoint OBJECT NOT NULL, -- JSONB equivalent in Snowflake
+        metadata OBJECT NOT NULL DEFAULT OBJECT_CONSTRUCT(), -- JSONB equivalent with default empty object
         PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
     );
     """,
@@ -50,7 +50,7 @@ MIGRATIONS = [
         channel STRING NOT NULL,
         version STRING NOT NULL,
         type STRING NOT NULL,
-        blob STRING, -- BYTEA equivalent in Snowflake
+        blob STRING, -- BYTEA stored as base64 using cutom serializer in Snowflake
         PRIMARY KEY (thread_id, checkpoint_ns, channel, version)
     );
     """,
@@ -73,21 +73,19 @@ MIGRATIONS = [
     """
 ]
 
-
-
 SELECT_SQL = f"""
 WITH checkpoint_blob_data AS (
-    SELECT c.thread_id, c.checkpoint_ns,
+    SELECT c.thread_id, c.checkpoint_ns,c.checkpoint_id,
         ARRAY_AGG(ARRAY_CONSTRUCT(bl.channel, bl.type, bl.blob)) AS channel_values
     FROM checkpoints as c,
-    LATERAL FLATTEN(INPUT => PARSE_JSON(c.checkpoint):channel_versions) as  j
+    LATERAL FLATTEN(INPUT => c.checkpoint:channel_versions) as  j
     JOIN checkpoint_blobs as bl
         WHERE bl.thread_id =  c.thread_id
         AND bl.checkpoint_ns = c.checkpoint_ns
         AND bl.channel = j.KEY
         AND bl.version = j.VALUE
     GROUP BY
-        c.thread_id,  c.checkpoint_ns
+        c.thread_id,  c.checkpoint_ns, c.checkpoint_id
 )
 SELECT
     c.thread_id,
@@ -103,6 +101,7 @@ FROM checkpoints c
 JOIN checkpoint_blob_data blob_data
     ON blob_data.thread_id = c.thread_id
     AND blob_data.checkpoint_ns = c.checkpoint_ns
+    AND blob_data.checkpoint_id = c.checkpoint_id
 , LATERAL (
     SELECT ARRAY_AGG(ARRAY_CONSTRUCT(cw.task_id, cw.channel, cw.type, cw.blob)) AS pending_writes
     FROM checkpoint_writes cw
@@ -231,6 +230,7 @@ class BaseSnowflakeSaver(BaseCheckpointSaver[str]):
         channel_values: list[tuple[bytes, bytes, bytes]],
         pending_sends: list[tuple[bytes, bytes]],
     ) -> Checkpoint:
+       
         return {
             **checkpoint,
             "pending_sends": [
@@ -252,6 +252,7 @@ class BaseSnowflakeSaver(BaseCheckpointSaver[str]):
             for k, t, v in blob_values
             if t != "empty"
         }
+        
 
     def _dump_blobs(
         self,
